@@ -30,5 +30,8 @@ way_eeg_gal()
 
 ```
 import datasets
-raw = datasets.read_execution(subject = 1, trial = 1)
+raw_execution = datasets.read_execution(subject = 1, trial = 1)
+raw_imagination = datasets.read_imagination(subject = 1, trial = 1)
+raw_sci_offline = datasets.sci_offline(subject = 1, trial = 1)
+raw_sci_online = datasets.sci_online(subject = 1, trial = 1)
 ```
