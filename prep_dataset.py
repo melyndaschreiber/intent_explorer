@@ -17,6 +17,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.pipeline import Pipeline, make_pipeline, FeatureUnion
 from sklearn.model_selection import StratifiedKFold, ShuffleSplit, cross_val_score, StratifiedShuffleSplit
 from sklearn.base import BaseEstimator, TransformerMixin
+from mne.time_frequency import psd_multitaper
 
 class Prep:
 
@@ -322,6 +323,7 @@ class Prep:
             events_train[key] = temp_events
             epochs_train[key] = value_train
             
+            
             temp_test = self.testing_raws.filter(fmin, fmax, fir_design=filter_design)
             temp_events = mne.find_events(temp_test, stim_channel='STIM', shortest_event=1)
             temp_picks = pick_types(temp_test.info, eeg=True, stim=False, eog=False)
@@ -333,6 +335,82 @@ class Prep:
         self.epochs_test = epochs_test
         self.events_train = events_train
         self.epochs_train = epochs_train
+           
+    def flatten_psd(self, elec_psd, tested_freqs, freq_range = [2, 25]):
+        """Flatten the power spectral density using the FOOOF algorithm.
+
+        Args:
+            tested_freqs: An array containing the frequencies of interest.
+            elec_psd: An array containing the original electrode power spectral density.
+
+        Returns:
+            results: A dictionary containing the flat spectrum, offset, slope, peak parameters, guassian parameters,
+            FOOOFED spectra, R2 and the error.
+        """
+        from fooof import FOOOF
+        import numpy as np
+
+        # Update settings to fit a more constrained model, to reduce overfitting
+        e = FOOOF(peak_width_limits=[2, 8], max_n_peaks=6)
+
+        # Add data to FOOOF object
+        #freq_range = [8, 33]
+        #fm = FOOOF(peak_width_limits=[1, 8], max_n_peaks=6, min_peak_height=0.4)
+        # freq_range = 2*len Need to change the frequency resultion
+        e.add_data(tested_freqs, elec_psd, freq_range)
+        e.fit(tested_freqs, elec_psd, freq_range)
+
+        results = dict()
+        results['PSD'] = elec_psd
+        results['tested_Frequencies'] = tested_freqs
+        results['flat_Spectrum'] = e._peak_fit
+        results['Offset'] = e.aperiodic_params_[0]
+        results['Slope'] = e.aperiodic_params_[1]
+        results['PeakParams'] = e.peak_params_
+        #results['GaussianParams'] = e._gaussian_params
+        results['Foofed'] = e.fooofed_spectrum_
+        results['R2'] = e.r_squared_
+        results['OError'] = e.error_
+        
+        self.fooof_results = results
+        
+        return results
+
+    def create_fooof_epochs(self, event_id, tmin=-1.25, tmax=0.25, fmin = 2, fmax = 25):
+
+        fooof_results = {}
+        fmin, fmax = 2, 25
+
+        for this_event in list(event_id.keys()):
+            print(this_event)
+            fooof_results[this_event] = []
+            train_event_data = self.epochs_train['wide'][this_event]
+            train_psds, train_freqs = psd_multitaper(train_event_data, low_bias=True, tmin=tmin, tmax=tmax, fmin=fmin, fmax=fmax, proj=False, picks='eeg', n_jobs=-1)
+         
+            for instance in train_psds:
+                current_event_data = []
+                for electrode in instance:
+                    temp_result = self.flatten_psd(electrode, train_freqs, freq_range = [fmin, fmax])
+                    current_event_data.append(temp_result)
+                fooof_results[this_event].append(current_event_data)
+                training_fooof = fooof_results
+        self.training_fooof = fooof_results
+
+        fooof_results = {}
+        for this_event in list(event_id.keys()):
+            print(this_event)
+            fooof_results[this_event] = []
+            test_event_data = self.epochs_test['wide'][this_event]  
+            test_psds, test_freqs = psd_multitaper(test_event_data, low_bias=True, tmin=tmin, tmax=tmax, fmin=fmin, fmax=fmax, proj=False, picks='eeg', n_jobs=-1)
+
+            for instance in test_psds:
+                current_event_data = []
+                for electrode in instance:
+                    temp_result = self.flatten_psd(electrode, test_freqs, freq_range = [fmin, fmax])
+                    current_event_data.append(temp_result)
+                fooof_results[this_event].append(current_event_data)
+                testing_fooof = fooof_results
+        self.testing_fooof = fooof_results
 
     def multiband_binary_OVR_class_blah(self, event1, csp = CSP(n_components=4, reg=None, log=True, norm_trace=False), lda = LinearDiscriminantAnalysis()):
 

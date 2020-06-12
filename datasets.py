@@ -404,11 +404,11 @@ def read_sci_offline(subject, trial):
     raw = RawArray(raw_data_pd.T, info, verbose=False).load_data()
     return raw
 
-def read_sci_online(session, trial_type, trial):
+def read_sci_online(session, type_of_trial, trial):
 
     import os
     wd = os.getcwd() + '\data'
-    file_location = wd + '/P%02d Run %d.gdf' % (subject, trial)
+    file_location = wd + '/P09 Run %d.gdf' % (trial)
     raw = mne.io.read_raw_gdf(file_location)
     events, event_dict = mne.events_from_annotations(raw)
     eeg_names = ["AFz", "F3", "F1", "Fz", "F2", "F4",
