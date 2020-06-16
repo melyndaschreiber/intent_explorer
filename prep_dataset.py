@@ -885,8 +885,8 @@ class Prep:
 
         return report_df
 
+    def OVO_wide_best_params(self, event1, event2):
 
-    def OVO_best_params(self, event1, event2):
         # Import libraries for machine learning
         from sklearn.model_selection import StratifiedShuffleSplit, cross_validate, cross_val_predict
         from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -911,28 +911,30 @@ class Prep:
         for key in enumerate(list(self.bands.keys())):
             key = key[1]
 
-            # Create training and testing dataset for both events
-            event1_train[key] = self.epochs_train[key][event1]
-            event2_train[key] = self.epochs_train[key][event2]
-            event1_test[key] = self.epochs_test[key][event1]
-            event2_test[key] = self.epochs_test[key][event2]
+            if key == 'wide':
 
-            # Extract training data from epochs and events
-            event1_train_labels = event1_train[key].events[:,2]
-            event1_train_data = event1_train[key].get_data()
-            event2_train_labels = event2_train[key].events[:,2]
-            event2_train_data = event2_train[key].get_data()
+                # Create training and testing dataset for both events
+                event1_train[key] = self.epochs_train[key][event1]
+                event2_train[key] = self.epochs_train[key][event2]
+                event1_test[key] = self.epochs_test[key][event1]
+                event2_test[key] = self.epochs_test[key][event2]
 
-            # Extract testing data from epochs and events
-            event1_test_labels = event1_test[key].events[:,2]
-            event1_test_data = event1_test[key].get_data()
-            event2_test_labels = event2_test[key].events[:,2]
-            event2_test_data = event2_test[key].get_data()
+                # Extract training data from epochs and events
+                event1_train_labels = event1_train[key].events[:,2]
+                event1_train_data = event1_train[key].get_data()
+                event2_train_labels = event2_train[key].events[:,2]
+                event2_train_data = event2_train[key].get_data()
 
-            X = np.concatenate([event1_train_data, event2_train_data], axis = 0)
-            y = np.concatenate([event1_train_labels, event2_train_labels])
-            x_test = np.concatenate([event1_test_data, event2_test_data], axis = 0)
-            y_test = np.concatenate([event1_test_labels, event2_test_labels])
+                # Extract testing data from epochs and events
+                event1_test_labels = event1_test[key].events[:,2]
+                event1_test_data = event1_test[key].get_data()
+                event2_test_labels = event2_test[key].events[:,2]
+                event2_test_data = event2_test[key].get_data()
+
+                X = np.concatenate([event1_train_data, event2_train_data], axis = 0)
+                y = np.concatenate([event1_train_labels, event2_train_labels])
+                x_test = np.concatenate([event1_test_data, event2_test_data], axis = 0)
+                y_test = np.concatenate([event1_test_labels, event2_test_labels])
 
         #X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
         lda = LinearDiscriminantAnalysis()
@@ -976,6 +978,307 @@ class Prep:
 
         actual_test = y_test
         predicted_test = lda.predict(X_csp_test)
+
+        print("Train accuracy: %f" % train_score)
+        print("Validation accuracy: %f" % val_score)
+        print("Test accuracy: %f" % test_score)
+
+        return train_score, val_score, test_score, clf, actual_test, predicted_test
+
+    def OVR_SFS_wide_best_params(self, event1, num_features=16):
+
+        # Import libraries for machine learning
+        from sklearn.model_selection import StratifiedShuffleSplit, cross_validate, cross_val_predict
+        from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+        from sklearn.metrics import classification_report,confusion_matrix, accuracy_score
+        from sklearn.pipeline import Pipeline
+        from mlxtend.feature_selection import SequentialFeatureSelector as SFS
+        from mlxtend.plotting import plot_sequential_feature_selection as plot_sfs
+
+        import pandas as pd
+        import numpy as np
+        from random import sample
+        import mne
+        from mne.decoding import CSP
+        import matplotlib.pyplot as plt
+
+        mne.set_log_level(30) 
+        
+        # Import libraries for machine learning
+        total_predicted_test,total_actual_test = [], []
+        event1_train, event2_train, event1_test, event2_test = {}, {}, {}, {}
+        train_percentage, val_percentage, test_percentage = [], [], []
+
+        for k, key in enumerate(list(self.bands.keys())):
+            print(key)
+
+            # Create a the train self for a second event as a series of other equally represented events
+            new_events_list = list(self.epochs_train[key].event_id)
+            new_events_list.remove(event1)
+            print(new_events_list)
+
+            num_epochs_train = np.arange(0,len(self.epochs_train[key][event1]),1)
+            chosen_train = sample(list(num_epochs_train), int(len(self.epochs_train[key][new_events_list[1]])/6))
+            #chosen_train = sample(list(num_epochs_train), int(len(self.epochs_train[key][new_events_list[1]])/5))
+
+            sev1_train = self.epochs_train[key][new_events_list[0]][chosen_train]
+            sev2_train = self.epochs_train[key][new_events_list[1]][chosen_train]
+            sev3_train = self.epochs_train[key][new_events_list[2]][chosen_train]
+            sev4_train = self.epochs_train[key][new_events_list[3]][chosen_train]
+            sev5_train = self.epochs_train[key][new_events_list[4]][chosen_train]
+            sev6_train = self.epochs_train[key][new_events_list[5]][chosen_train]
+
+            event2_epochs_train = mne.concatenate_epochs([sev1_train, sev2_train, sev3_train, sev4_train, sev5_train, sev6_train])
+            #event2_epochs_train = mne.concatenate_epochs([sev1_train, sev2_train, sev3_train, sev4_train, sev5_train])
+            event2_train_data = event2_epochs_train.get_data()
+            event2_train_labels = np.array([0] * len(num_epochs_train))
+
+            num_epochs_test = np.arange(0,len(self.epochs_test[key][event1]),1)
+            chosen_test = sample(list(num_epochs_test), int(len(self.epochs_test[key][new_events_list[1]])/6))
+            #chosen_test = sample(list(num_epochs_test), int(len(self.epochs_test[key][new_events_list[1]])/5))
+
+            sev1_test = self.epochs_test[key][new_events_list[0]][chosen_test]
+            sev2_test = self.epochs_test[key][new_events_list[1]][chosen_test]
+            sev3_test = self.epochs_test[key][new_events_list[2]][chosen_test]
+            sev4_test = self.epochs_test[key][new_events_list[3]][chosen_test]
+            sev5_test = self.epochs_test[key][new_events_list[4]][chosen_test]
+            sev6_test = self.epochs_test[key][new_events_list[5]][chosen_test]
+
+            event2_epochs_test = mne.concatenate_epochs([sev1_test, sev2_test, sev3_test, sev4_test, sev5_test, sev6_test])
+            #event2_epochs_test = mne.concatenate_epochs([sev1_test, sev2_test, sev3_test, sev4_test, sev5_test])
+            event2_test_data = event2_epochs_test.get_data()
+            event2_test_labels = np.array([0] * len(num_epochs_test))
+
+            # Create training and testing dataset for both events
+            event1_train[key] = self.epochs_train[key][event1]
+            event1_test[key] = self.epochs_test[key][event1]
+
+            # Extract training data from epochs and events
+            event1_train_labels = event1_train[key].events[:,2]
+            event1_train_data = event1_train[key].get_data()
+
+            # Extract testing data from epochs and events
+            event1_test_labels = event1_test[key].events[:,2]
+            #event1_test_labels = np.array([1] * len(num_epochs_test))
+            event1_test_data = event1_test[key].get_data()
+
+            # Concatenate epochs of different events
+            X = np.concatenate([event1_train_data, event2_train_data], axis = 0)
+            x_test = np.concatenate([event1_test_data, event2_test_data], axis = 0)
+            y = np.concatenate([event1_train_labels, event2_train_labels])
+            y_test = np.concatenate([event1_test_labels, event2_test_labels], axis = 0)
+
+        #X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+        sss = StratifiedShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
+        lda = LinearDiscriminantAnalysis()
+        csp = CSP(n_components=6, reg=None, log=True, norm_trace=False)
+        cv = ShuffleSplit(5, test_size=0.2, random_state=42)
+        cv_gen = sss.split(X, y)
+
+        # Use scikit-learn Pipeline with cross_val_score function
+        clf = Pipeline([('CSP', csp), ('LDA', lda)])
+
+        param_grid = [
+            {'CSP__n_components': [4, 6, 8, 10, 12, 14], 
+            'CSP__log': [True, False],
+            'LDA__solver': ['lsqr', 'eigen'], 
+            'LDA__shrinkage': ['auto', 0, 0.5, 1]}
+            ]
+
+        gs = GridSearchCV(estimator=clf, 
+                            param_grid=param_grid, 
+                            scoring='accuracy', 
+                            n_jobs=-1, 
+                            cv=5)
+
+        # run gridearch
+        gs = gs.fit(X, y)
+        for i in range(len(gs.cv_results_['params'])):
+            print(gs.cv_results_['params'][i], 'test acc.:', gs.cv_results_['mean_test_score'][i])
+
+        clf = gs.best_estimator_
+
+        sfs1 = SFS(clf, 
+                k_features=num_features, 
+                forward=True, 
+                floating=False, 
+                verbose=2,
+                scoring='accuracy',
+                cv=list(cv_gen), 
+                n_jobs = -1)
+
+        sfs1 = sfs1.fit(X, y, custom_feature_names=self.raw.info['ch_names'][0:61])
+
+
+
+        metric_model = sfs1
+        metrics = pd.DataFrame.from_dict(sfs1.get_metric_dict()).T
+        plot_sfs(sfs1.get_metric_dict(), kind='std_dev')
+
+        plt.ylim([0, 1])
+        plt.title('Sequential Forward Selection (w. StdDev)')
+        plt.grid()
+        plt.show()
+
+        x_train_sfs = sfs1.transform(X)
+        x_test_sfs = sfs1.transform(x_test)
+
+        scores = cross_validate(clf, x_train_sfs, y, cv = cv, scoring='accuracy', return_train_score = True)
+
+        train_score = np.mean(scores['train_score'])
+        val_score = np.mean(scores['test_score'])
+
+        csp = gs.best_estimator_[0]
+        lda = gs.best_estimator_[1]
+        clf = Pipeline([('CSP', csp), ('LDA', lda)])
+
+        clf.fit(x_train_sfs, y)
+        test_score = clf.score(x_test_sfs, y_test)
+
+        actual_test = y_test
+        predicted_test = clf.predict(x_test_sfs)
+
+        print("Train accuracy: %f" % train_score)
+        print("Validation accuracy: %f" % val_score)
+        print("Test accuracy: %f" % test_score)
+
+        return train_score, val_score, test_score, clf, actual_test, predicted_test
+
+
+    def OVO_SFS_wide_best_params(self, event1, event2, num_features=16):
+
+        # Import libraries for machine learning
+        from sklearn.model_selection import StratifiedShuffleSplit, cross_validate, cross_val_predict
+        from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+        from sklearn.metrics import classification_report,confusion_matrix, accuracy_score
+        from sklearn.pipeline import Pipeline
+        from mlxtend.feature_selection import SequentialFeatureSelector as SFS
+        from mlxtend.plotting import plot_sequential_feature_selection as plot_sfs
+        from sklearn.preprocessing import MinMaxScaler
+        from mne.decoding import Vectorizer
+        from sklearn.preprocessing import StandardScaler
+
+        import pandas as pd
+        import numpy as np
+        from random import sample
+        import mne
+        from mne.decoding import CSP, Scaler
+        import matplotlib.pyplot as plt
+        from sklearn.svm import SVC
+
+        mne.set_log_level(30) 
+        
+        # Import libraries for machine learning
+        total_predicted_test,total_actual_test = [], []
+        event1_train, event2_train, event1_test, event2_test = {}, {}, {}, {}
+        train_percentage, val_percentage, test_percentage = [], [], []
+
+        for k, key in enumerate(list(self.bands.keys())):
+            print(key)                
+            
+            # Create training and testing dataset for both events
+            event1_train[key] = self.epochs_train[key][event1]
+            event2_train[key] = self.epochs_train[key][event2]
+            event1_test[key] = self.epochs_test[key][event1]
+            event2_test[key] = self.epochs_test[key][event2]
+
+            # Extract training data from epochs and events
+            event1_train_labels = event1_train[key].events[:,2]
+            event1_train_data = event1_train[key].get_data()
+            event2_train_labels = event2_train[key].events[:,2]
+            event2_train_data = event2_train[key].get_data()
+
+            # Extract testing data from epochs and events
+            event1_test_labels = event1_test[key].events[:,2]
+            event1_test_data = event1_test[key].get_data()
+            event2_test_labels = event2_test[key].events[:,2]
+            event2_test_data = event2_test[key].get_data()
+
+            X = np.concatenate([event1_train_data, event2_train_data], axis = 0)
+            y = np.concatenate([event1_train_labels, event2_train_labels])
+            x_test = np.concatenate([event1_test_data, event2_test_data], axis = 0)
+            y_test = np.concatenate([event1_test_labels, event2_test_labels])
+
+        lda = LinearDiscriminantAnalysis()
+        csp = CSP(n_components=6, reg=None, log=True, norm_trace=False)
+        cv = ShuffleSplit(5, test_size=0.2, random_state=42)
+        svm = SVC()
+        # Use scikit-learn Pipeline with cross_val_score function
+        #clf = Pipeline([('CSP', csp), ('LDA', lda)])
+        #vector = Vectorizer()
+        #scaler = MinMaxScaler()
+        #scaler = StandardScaler()
+        #scaler = Scaler(self.raw.info, scalings = 'mean')
+        clf = Pipeline([('CSP', csp), ('SVM', svm)])
+        #clf = Pipeline([('CSP', csp), ('SVM', svm)])
+        # param_grid = [
+        #     {'CSP__n_components': [4, 6, 8, 10, 12, 14], 
+        #     'CSP__log': [True],
+        #     'LDA__solver': ['lsqr', 'eigen'], 
+        #     'LDA__shrinkage': ['auto', 0, 0.5, 1]}
+        #     ]
+
+        param_grid = [
+            {'CSP__n_components': [4, 5, 6], 
+            'CSP__log': [True, False],
+            'SVM__C': [0.1, 1, 10, 100, 1000],  
+            'SVM__gamma': [100, 10, 1, 0.1, 0.01, 0.001, 0.0001], 
+            'SVM__kernel': ['rbf']}
+            ]
+
+        gs = GridSearchCV(estimator=clf, 
+                            param_grid=param_grid, 
+                            scoring='accuracy', 
+                            n_jobs=-1, 
+                            cv=3)
+
+        # run gridearch
+        gs = gs.fit(X, y)
+        # for i in range(len(gs.cv_results_['params'])):
+        #     print(gs.cv_results_['params'][i], 'test acc.:', gs.cv_results_['mean_test_score'][i])
+
+        
+        #print(clf)
+        print('Best Components:',gs.best_estimator_[0])
+        print('Best SVM:',gs.best_estimator_[1]) 
+
+        sfs1 = SFS(clf, 
+                k_features=num_features, 
+                forward=True, 
+                floating=False, 
+                verbose=2,
+                scoring='accuracy',
+                cv=3, 
+                n_jobs = -1)
+
+        sfs1 = sfs1.fit(X, y, custom_feature_names=self.raw.info['ch_names'][0:61])
+
+        metric_model = sfs1
+        metrics = pd.DataFrame.from_dict(sfs1.get_metric_dict()).T
+        plot_sfs(sfs1.get_metric_dict(), kind='std_dev')
+
+        plt.ylim([0, 1])
+        plt.title('Sequential Forward Selection (w. StdDev)')
+        plt.grid()
+        plt.show()
+
+        x_train_sfs = sfs1.transform(X)
+        x_test_sfs = sfs1.transform(x_test)
+        clf = gs.best_estimator_
+        scores = cross_validate(clf, x_train_sfs, y, cv = cv, scoring='accuracy', return_train_score = True)
+
+        train_score = np.mean(scores['train_score'])
+        val_score = np.mean(scores['test_score'])
+
+        # csp = gs.best_estimator_[0]
+        # lda = gs.best_estimator_[1]
+        # clf = Pipeline([('CSP', csp), ('LDA', lda)])
+
+        clf.fit(x_train_sfs, y)
+        test_score = clf.score(x_test_sfs, y_test)
+
+        actual_test = y_test
+        predicted_test = clf.predict(x_test_sfs)
 
         print("Train accuracy: %f" % train_score)
         print("Validation accuracy: %f" % val_score)
